@@ -1,6 +1,8 @@
 use fluent::concurrent::FluentBundle;
 use fluent::{FluentArgs, FluentError, FluentResource};
 use fluent_syntax::parser::ParserError;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::error;
 use std::fmt;
 use std::fs::File;
@@ -45,8 +47,8 @@ impl From<io::Error> for Error {
 
 #[derive(Clone)]
 pub struct FluentErgo {
-    //language: LanguageIdentifier,
-    bundle: Arc<RwLock<FluentBundle<FluentResource>>>,
+    languages: Vec<LanguageIdentifier>,
+    bundles: Arc<RwLock<HashMap<LanguageIdentifier, FluentBundle<FluentResource>>>>,
 }
 
 impl fmt::Debug for FluentErgo {
@@ -61,61 +63,80 @@ impl fmt::Debug for FluentErgo {
 }
 
 impl FluentErgo {
-    pub fn new(languages: Vec<LanguageIdentifier>) -> FluentErgo {
-        let bundle = FluentBundle::new(&languages);
+    pub fn new(languages: &[LanguageIdentifier]) -> FluentErgo {
         FluentErgo {
-            bundle: Arc::new(RwLock::new(bundle)),
+            languages: Vec::from(languages),
+            bundles: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn add_from_text(&mut self, text: String) -> Result<(), Error> {
+    pub fn add_from_text(&mut self, lang: LanguageIdentifier, text: String) -> Result<(), Error> {
         let res = FluentResource::try_new(text)?;
-        self.bundle
-            .write()
-            .unwrap()
-            .add_resource(res)
-            .map_err(|err| Error::from(err))
+        let mut bundles = self.bundles.write().unwrap();
+        let mut entry = bundles.entry(lang.clone());
+        match entry {
+            Entry::Occupied(mut e) => {
+                let bundle = e.get_mut();
+                bundle.add_resource(res).map_err(|err| Error::from(err))
+            }
+            Entry::Vacant(mut e) => {
+                let mut bundle = FluentBundle::new(&[lang]);
+                bundle.add_resource(res).map_err(|err| Error::from(err))?;
+                e.insert(bundle);
+                Ok(())
+            }
+        }?;
+        Ok(())
     }
 
+    /*
     pub fn add_from_file(&mut self, path: &Path) -> Result<(), Error> {
         let mut v = Vec::new();
         let mut f = File::open(path)?;
         f.read_to_end(&mut v)?;
         self.add_from_text(String::from_utf8(v).unwrap())
     }
-
-    /*
-    fn add_language(bundle: &mut FluentBundle<FluentResource>, lang: &Language) {
-        let lang_resource = match lang {
-            Language::English => {
-                FluentResource::try_new(load_translation_file(PathBuf::from("en.txt")))
-            }
-            Language::Esperanto => {
-                FluentResource::try_new(load_translation_file(PathBuf::from("eo.txt")))
-            }
-        };
-        match lang_resource {
-            Ok(res) => {
-                let _ = bundle.add_resource(res);
-            }
-            Err(err) => panic!("{:?}", err),
-        }
-    }
     */
 
-    pub fn tr(&self, id: &str, args: Option<&FluentArgs>) -> Result<String, Error> {
-        let mut errors = vec![];
+    pub fn tr(&self, msgid: &str, args: Option<&FluentArgs>) -> Result<String, Error> {
+        let bundles = self.bundles.read().unwrap();
+        let result: Option<String> = self
+            .languages
+            .iter()
+            .map(|lang| {
+                println!("trying language: {:?}", lang);
+                let bundle = bundles.get(lang)?;
+                self.tr_(bundle, msgid, args)
+            })
+            .filter(|v| v.is_some())
+            .map(|v| v.unwrap())
+            .next();
 
-        let bundle = self.bundle.read().unwrap();
-        let pattern = bundle
-            .get_message(id)
-            .and_then(|msg| msg.value)
-            .ok_or(Error::NoMatchingMessage)?;
-        let res = bundle.format_pattern(&pattern, args, &mut errors);
-        if errors.len() != 0 {
-            Err(Error::from(errors))
-        } else {
-            Ok(String::from(res))
+        println!("result: {:?}", result);
+        match result {
+            Some(r) => Ok(r),
+            _ => Err(Error::NoMatchingMessage),
+        }
+    }
+
+    fn tr_(
+        &self,
+        bundle: &FluentBundle<FluentResource>,
+        msgid: &str,
+        args: Option<&FluentArgs>,
+    ) -> Option<String> {
+        let mut errors = vec![];
+        let pattern = bundle.get_message(msgid).and_then(|msg| msg.value);
+        match pattern {
+            None => None,
+            Some(p) => {
+                let res = bundle.format_pattern(&p, args, &mut errors);
+                if errors.len() > 0 {
+                    println!("Errors in formatting: {:?}", errors)
+                }
+
+                Some(String::from(res))
+            }
         }
     }
 }
@@ -136,12 +157,13 @@ history = Historio
 
     #[test]
     fn translations() {
-        //let en = "en-US".parse::<LanguageIdentifier>();
-        let mut en = FluentErgo::new(Vec::new());
-        en.add_from_text(String::from(en_translations))
+        let en_id = "en-US".parse::<LanguageIdentifier>().unwrap();
+        let mut fluent = FluentErgo::new(&vec![en_id.clone()]);
+        fluent
+            .add_from_text(en_id, String::from(en_translations))
             .expect("text should load");
         assert_eq!(
-            en.tr("preferences", None).unwrap(),
+            fluent.tr("preferences", None).unwrap(),
             String::from("Preferences")
         );
     }
@@ -150,15 +172,20 @@ history = Historio
     fn translation_fallback() {
         let eo_id = "eo".parse::<LanguageIdentifier>().unwrap();
         let en_id = "en".parse::<LanguageIdentifier>().unwrap();
-        let mut eo = FluentErgo::new(vec![eo_id, en_id]);
-        eo.add_from_text(String::from(en_translations))
+        let mut fluent = FluentErgo::new(&vec![eo_id.clone(), en_id.clone()]);
+        fluent
+            .add_from_text(en_id, String::from(en_translations))
             .expect("text should load");
-        eo.add_from_text(String::from(eo_translations))
+        fluent
+            .add_from_text(eo_id, String::from(eo_translations))
             .expect("text should load");
         assert_eq!(
-            eo.tr("preferences", None).unwrap(),
+            fluent.tr("preferences", None).unwrap(),
             String::from("Preferences")
         );
-        assert_eq!(eo.tr("history", None).unwrap(), String::from("Historio"));
+        assert_eq!(
+            fluent.tr("history", None).unwrap(),
+            String::from("Historio")
+        );
     }
 }

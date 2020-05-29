@@ -14,10 +14,32 @@ use unic_langid::LanguageIdentifier;
 
 #[derive(Debug)]
 pub enum Error {
-    NoMatchingMessage,
+    NoMatchingMessage(String),
     FluentParserError(Vec<ParserError>),
     FluentError(Vec<FluentError>),
     IOError(io::Error),
+}
+
+impl error::Error for Error {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self {
+            Error::NoMatchingMessage(_) => None,
+            Error::FluentParserError(_) => None,
+            Error::FluentError(_) => None,
+            Error::IOError(error) => Some(error),
+        }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::NoMatchingMessage(id) => write!(f, "No matching message for {}", id),
+            Error::FluentParserError(errs) => write!(f, "Fluent Parser Error: {:?}", errs),
+            Error::FluentError(errs) => write!(f, "Fluent Error: {:?}", errs),
+            Error::IOError(error) => write!(f, "IO Error: {}", error),
+        }
+    }
 }
 
 impl From<(FluentResource, Vec<ParserError>)> for Error {
@@ -73,13 +95,13 @@ impl FluentErgo {
     pub fn add_from_text(&mut self, lang: LanguageIdentifier, text: String) -> Result<(), Error> {
         let res = FluentResource::try_new(text)?;
         let mut bundles = self.bundles.write().unwrap();
-        let mut entry = bundles.entry(lang.clone());
+        let entry = bundles.entry(lang.clone());
         match entry {
             Entry::Occupied(mut e) => {
                 let bundle = e.get_mut();
                 bundle.add_resource(res).map_err(|err| Error::from(err))
             }
-            Entry::Vacant(mut e) => {
+            Entry::Vacant(e) => {
                 let mut bundle = FluentBundle::new(&[lang]);
                 bundle.add_resource(res).map_err(|err| Error::from(err))?;
                 e.insert(bundle);
@@ -89,14 +111,12 @@ impl FluentErgo {
         Ok(())
     }
 
-    /*
-    pub fn add_from_file(&mut self, path: &Path) -> Result<(), Error> {
+    pub fn add_from_file(&mut self, lang: LanguageIdentifier, path: &Path) -> Result<(), Error> {
         let mut v = Vec::new();
         let mut f = File::open(path)?;
         f.read_to_end(&mut v)?;
-        self.add_from_text(String::from_utf8(v).unwrap())
+        self.add_from_text(lang, String::from_utf8(v).unwrap())
     }
-    */
 
     pub fn tr(&self, msgid: &str, args: Option<&FluentArgs>) -> Result<String, Error> {
         let bundles = self.bundles.read().unwrap();
@@ -115,7 +135,7 @@ impl FluentErgo {
         println!("result: {:?}", result);
         match result {
             Some(r) => Ok(r),
-            _ => Err(Error::NoMatchingMessage),
+            _ => Err(Error::NoMatchingMessage(String::from(msgid))),
         }
     }
 
@@ -146,12 +166,12 @@ mod tests {
     use super::FluentErgo;
     use unic_langid::LanguageIdentifier;
 
-    const en_translations: &'static str = "
+    const EN_TRANSLATIONS: &'static str = "
 preferences = Preferences
 history = History
 ";
 
-    const eo_translations: &'static str = "
+    const EO_TRANSLATIONS: &'static str = "
 history = Historio
 ";
 
@@ -160,7 +180,7 @@ history = Historio
         let en_id = "en-US".parse::<LanguageIdentifier>().unwrap();
         let mut fluent = FluentErgo::new(&vec![en_id.clone()]);
         fluent
-            .add_from_text(en_id, String::from(en_translations))
+            .add_from_text(en_id, String::from(EN_TRANSLATIONS))
             .expect("text should load");
         assert_eq!(
             fluent.tr("preferences", None).unwrap(),
@@ -174,10 +194,10 @@ history = Historio
         let en_id = "en".parse::<LanguageIdentifier>().unwrap();
         let mut fluent = FluentErgo::new(&vec![eo_id.clone(), en_id.clone()]);
         fluent
-            .add_from_text(en_id, String::from(en_translations))
+            .add_from_text(en_id, String::from(EN_TRANSLATIONS))
             .expect("text should load");
         fluent
-            .add_from_text(eo_id, String::from(eo_translations))
+            .add_from_text(eo_id, String::from(EO_TRANSLATIONS))
             .expect("text should load");
         assert_eq!(
             fluent.tr("preferences", None).unwrap(),

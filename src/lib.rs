@@ -9,20 +9,23 @@ use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::path::Path;
+use std::string::FromUtf8Error;
 use std::sync::{Arc, RwLock};
 use unic_langid::LanguageIdentifier;
 
 #[derive(Debug)]
 pub enum Error {
-    NoMatchingMessage(String),
-    FluentParserError(Vec<ParserError>),
+    FileEncodingError(FromUtf8Error),
     FluentError(Vec<FluentError>),
+    FluentParserError(Vec<ParserError>),
     IOError(io::Error),
+    NoMatchingMessage(String),
 }
 
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
+            Error::FileEncodingError(error) => Some(error),
             Error::NoMatchingMessage(_) => None,
             Error::FluentParserError(_) => None,
             Error::FluentError(_) => None,
@@ -34,10 +37,13 @@ impl error::Error for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::NoMatchingMessage(id) => write!(f, "No matching message for {}", id),
-            Error::FluentParserError(errs) => write!(f, "Fluent Parser Error: {:?}", errs),
+            Error::FileEncodingError(error) => {
+                write!(f, "Translation file has an encoding problem: {}", error)
+            }
             Error::FluentError(errs) => write!(f, "Fluent Error: {:?}", errs),
+            Error::FluentParserError(errs) => write!(f, "Fluent Parser Error: {:?}", errs),
             Error::IOError(error) => write!(f, "IO Error: {}", error),
+            Error::NoMatchingMessage(id) => write!(f, "No matching message for {}", id),
         }
     }
 }
@@ -67,7 +73,13 @@ impl From<io::Error> for Error {
     }
 }
 
-#[derive(Clone)]
+impl From<FromUtf8Error> for Error {
+    fn from(error: FromUtf8Error) -> Self {
+        Error::FileEncodingError(error)
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct FluentErgo {
     languages: Vec<LanguageIdentifier>,
     bundles: Arc<RwLock<HashMap<LanguageIdentifier, FluentBundle<FluentResource>>>>,
@@ -115,7 +127,9 @@ impl FluentErgo {
         let mut v = Vec::new();
         let mut f = File::open(path)?;
         f.read_to_end(&mut v)?;
-        self.add_from_text(lang, String::from_utf8(v).unwrap())
+        String::from_utf8(v)
+            .map_err(Error::FileEncodingError)
+            .and_then(|s| self.add_from_text(lang, s))
     }
 
     pub fn tr(&self, msgid: &str, args: Option<&FluentArgs>) -> Result<String, Error> {
@@ -207,5 +221,17 @@ history = Historio
             fluent.tr("history", None).unwrap(),
             String::from("Historio")
         );
+    }
+
+    #[test]
+    fn test_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<FluentErgo>();
+    }
+
+    #[test]
+    fn test_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<FluentErgo>();
     }
 }

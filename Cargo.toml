@@ -20,4 +20,4 @@ include = [
 [dependencies]
 fluent = "0.11"
 unic-langid = "0.8"
-fluent-syntax = "*"
+fluent-syntax = "^0.9"

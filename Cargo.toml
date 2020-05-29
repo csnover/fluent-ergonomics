@@ -1,10 +1,21 @@
 [package]
 name = "fluent-ergonomics"
-version = "0.1.0"
-authors = ["savanni"]
+authors = ["Savanni D'Gerinel <savanni@luminescent-dreams.com>"]
 edition = "2018"
+version = "0.1.0"
+description = "An ergonomics wrapper around Fluent-RS"
+license = "BSD-3-Clause"
+homepage = "https://github.com/luminescent-dreams/fluent-ergonomics"
+repository = "https://github.com/luminescent-dreams/fluent-ergonomics"
+categories = ["internationalization"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+    "readme.md",
+    "LICENSE",
+    "CODE_OF_CONDUCT.md",
+]
 
 [dependencies]
 fluent = "0.11"

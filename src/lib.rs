@@ -1,3 +1,8 @@
+//! Provide a more ergonomic interface to the base Fluent library
+//!
+//! The Fluent class makes it easier to load translation bundles with language fallbacks and to go
+//! through the most common steps of translating a message.
+//!
 use fluent::concurrent::FluentBundle;
 use fluent::{FluentArgs, FluentError, FluentResource};
 use fluent_syntax::parser::ParserError;
@@ -15,10 +20,15 @@ use unic_langid::LanguageIdentifier;
 
 #[derive(Debug)]
 pub enum Error {
+    /// All files must be UTF-8 encoded.
     FileEncodingError(FromUtf8Error),
+    /// Fluent encountered an underlying error
     FluentError(Vec<FluentError>),
+    /// Fluent encountered an underlying error while parsing the translation strings
     FluentParserError(Vec<ParserError>),
+    /// There was an underlying IO error
     IOError(io::Error),
+    /// No message could be found matching the specified message ID
     NoMatchingMessage(String),
 }
 
@@ -96,7 +106,23 @@ impl fmt::Debug for FluentErgo {
     }
 }
 
+/// An Ergonomic class wrapping the Fluent library
 impl FluentErgo {
+    /// Construct the class with a list of languages. The list must be sorted in the order that
+    /// language packs will be tested. The first language listed will be the first language
+    /// searched for any translation message.
+    ///
+    /// Typically, I call this as
+    ///
+    /// ```
+    /// let mut fluent = FluentErgo::new(&[eo_id, en_id])
+    /// ```
+    ///
+    /// This specifies that I want to first look up messages in the Esperanto list, then fall back
+    /// to the English specfications if no Esperanto specification is present.
+    ///
+    /// Note that no language resources are loaded during construction. You must call
+    /// `add_from_text` or `add_from_file` to load language packs.
     pub fn new(languages: &[LanguageIdentifier]) -> FluentErgo {
         FluentErgo {
             languages: Vec::from(languages),
@@ -104,6 +130,19 @@ impl FluentErgo {
         }
     }
 
+    /// Add a list of translation strings from a string, which can be a constant hard-coded in the
+    /// application, loaded from a file, loaded from the internet, or wherever you like. `lang`
+    /// specifies which language the translation strings being provided.
+    ///
+    /// You should not specify a language that you did not include in the constructor. You can, but
+    /// the translation function will only check those languages specified when this object was
+    /// constructed.
+    ///
+    /// # Errors
+    ///
+    /// * `FluentError`
+    /// * `FluentParserError`
+    ///
     pub fn add_from_text(&mut self, lang: LanguageIdentifier, text: String) -> Result<(), Error> {
         let res = FluentResource::try_new(text)?;
         let mut bundles = self.bundles.write().unwrap();
@@ -123,6 +162,19 @@ impl FluentErgo {
         Ok(())
     }
 
+    /// Like `add_from_text`, but this will load the translation strings from a file.
+    ///
+    /// Note that this will load the entire file into memory before passing it to Fluent. While I
+    /// think it is unlikely, it is possible that a translation file may be so big as to run the
+    /// computer out of memory.
+    ///
+    /// # Errors
+    ///
+    /// * `FluentError`
+    /// * `FluentParserError`
+    /// * `FileEncodingError` -- all files must be encoded in UTF-8. Most files saved from text
+    /// editors already do proper UTF-8 encoding, so this should rarely be a problem.
+    ///
     pub fn add_from_file(&mut self, lang: LanguageIdentifier, path: &Path) -> Result<(), Error> {
         let mut v = Vec::new();
         let mut f = File::open(path)?;
@@ -132,6 +184,38 @@ impl FluentErgo {
             .and_then(|s| self.add_from_text(lang, s))
     }
 
+    /// Run a translation.
+    ///
+    /// `msgid` is the translation identifier as specified in the translation strings. `args` is a
+    /// set of Fluent arguments to be interpolated into the strings.
+    ///
+    /// This function will search language bundles in the order that they were specified in the
+    /// constructor. NoMatchingMessage will be returned only if the message identifier cannot be
+    /// found in any bundle.
+    ///
+    /// ```
+    /// length-without-label = {$value}
+    /// swimming = Swimming
+    /// units = Units
+    /// ```
+    ///
+    /// With this set of translation strings, `length-without-label`, `swimming`, and `units` are
+    /// all valid translation identifiers. See the documentation for `FluentBundle.get_message` for
+    /// more information.
+    ///
+    /// A typical call with arguments would look like this:
+    ///
+    /// ```
+    /// let mut args = FluentArgs::new();
+    /// args.insert("value", FluentValue::from(length_str));
+    /// fluent.tr("length-without-label", Some(&args))
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// * NoMatchingMessage -- this will be returned if the message identifier cannot be found in
+    /// any language bundle.
+    ///
     pub fn tr(&self, msgid: &str, args: Option<&FluentArgs>) -> Result<String, Error> {
         let bundles = self.bundles.read().unwrap();
         let result: Option<String> = self

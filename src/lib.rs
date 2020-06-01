@@ -115,7 +115,10 @@ impl FluentErgo {
     /// Typically, I call this as
     ///
     /// ```
-    /// let mut fluent = FluentErgo::new(&[eo_id, en_id])
+    /// let eo_id = "eo".parse::<unic_langid::LanguageIdentifier>().unwrap();
+    /// let en_id = "en-US".parse::<unic_langid::LanguageIdentifier>().unwrap();
+    ///
+    /// let mut fluent = fluent_ergonomics::FluentErgo::new(&[eo_id, en_id]);
     /// ```
     ///
     /// This specifies that I want to first look up messages in the Esperanto list, then fall back
@@ -193,7 +196,7 @@ impl FluentErgo {
     /// constructor. NoMatchingMessage will be returned only if the message identifier cannot be
     /// found in any bundle.
     ///
-    /// ```
+    /// ```ignore
     /// length-without-label = {$value}
     /// swimming = Swimming
     /// units = Units
@@ -206,9 +209,15 @@ impl FluentErgo {
     /// A typical call with arguments would look like this:
     ///
     /// ```
+    /// use fluent::{FluentArgs, FluentValue};
+    ///
+    /// let eo_id = "eo".parse::<unic_langid::LanguageIdentifier>().unwrap();
+    /// let en_id = "en-US".parse::<unic_langid::LanguageIdentifier>().unwrap();
+    ///
+    /// let mut fluent = fluent_ergonomics::FluentErgo::new(&[eo_id, en_id]);
     /// let mut args = FluentArgs::new();
-    /// args.insert("value", FluentValue::from(length_str));
-    /// fluent.tr("length-without-label", Some(&args))
+    /// args.insert("value", FluentValue::from("15"));
+    /// let r = fluent.tr("length-without-label", Some(&args));
     /// ```
     ///
     /// # Errors
@@ -222,7 +231,6 @@ impl FluentErgo {
             .languages
             .iter()
             .map(|lang| {
-                println!("trying language: {:?}", lang);
                 let bundle = bundles.get(lang)?;
                 self.tr_(bundle, msgid, args)
             })
@@ -230,7 +238,6 @@ impl FluentErgo {
             .map(|v| v.unwrap())
             .next();
 
-        println!("result: {:?}", result);
         match result {
             Some(r) => Ok(r),
             _ => Err(Error::NoMatchingMessage(String::from(msgid))),
@@ -245,7 +252,7 @@ impl FluentErgo {
     ) -> Option<String> {
         let mut errors = vec![];
         let pattern = bundle.get_message(msgid).and_then(|msg| msg.value);
-        match pattern {
+        let res = match pattern {
             None => None,
             Some(p) => {
                 let res = bundle.format_pattern(&p, args, &mut errors);
@@ -255,6 +262,13 @@ impl FluentErgo {
 
                 Some(String::from(res))
             }
+        };
+        match res {
+            Some(mut tr_string) => {
+                tr_string.retain(|v| v != '\u{2068}' && v != '\u{2069}');
+                Some(tr_string)
+            }
+            None => None,
         }
     }
 }
@@ -262,11 +276,14 @@ impl FluentErgo {
 #[cfg(test)]
 mod tests {
     use super::FluentErgo;
+    use fluent::{FluentArgs, FluentValue};
     use unic_langid::LanguageIdentifier;
 
     const EN_TRANSLATIONS: &'static str = "
 preferences = Preferences
 history = History
+time_display = {$time} during the day
+nested_display = nesting a time display: {time_display}
 ";
 
     const EO_TRANSLATIONS: &'static str = "
@@ -304,6 +321,36 @@ history = Historio
         assert_eq!(
             fluent.tr("history", None).unwrap(),
             String::from("Historio")
+        );
+    }
+
+    #[test]
+    fn placeholder_insertion_should_strip_placeholder_markers() {
+        let en_id = "en".parse::<LanguageIdentifier>().unwrap();
+        let mut fluent = FluentErgo::new(&vec![en_id.clone()]);
+        fluent
+            .add_from_text(en_id, String::from(EN_TRANSLATIONS))
+            .expect("text should load");
+        let mut args = FluentArgs::new();
+        args.insert("time", FluentValue::from(String::from("13:00")));
+        assert_eq!(
+            fluent.tr("time_display", Some(&args)).unwrap(),
+            String::from("13:00 during the day")
+        );
+    }
+
+    #[test]
+    fn placeholder_insertion_should_strip_nested_placeholder_markers() {
+        let en_id = "en".parse::<LanguageIdentifier>().unwrap();
+        let mut fluent = FluentErgo::new(&vec![en_id.clone()]);
+        fluent
+            .add_from_text(en_id, String::from(EN_TRANSLATIONS))
+            .expect("text should load");
+        let mut args = FluentArgs::new();
+        args.insert("time", FluentValue::from(String::from("13:00")));
+        assert_eq!(
+            fluent.tr("nested_display", Some(&args)).unwrap(),
+            String::from("nesting a time display: 13:00 during the day")
         );
     }
 

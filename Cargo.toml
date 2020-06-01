@@ -2,7 +2,7 @@
 name = "fluent-ergonomics"
 authors = ["Savanni D'Gerinel <savanni@luminescent-dreams.com>"]
 edition = "2018"
-version = "0.1.1"
+version = "0.2.0"
 description = "An ergonomics wrapper around Fluent-RS"
 license = "BSD-3-Clause"
 homepage = "https://github.com/luminescent-dreams/fluent-ergonomics"
